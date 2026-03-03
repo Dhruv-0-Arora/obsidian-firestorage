@@ -1,99 +1,209 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import { Notice, Plugin, TFile } from "obsidian";
+import { SyncDbManager } from "./db";
+import { MongoService } from "./mongo";
+import { SyncSettingTab } from "./settings";
+import { SyncEngine } from "./sync";
+import { DEFAULT_SETTINGS, SyncPluginSettings } from "./types";
 
-// Remember to rename these classes and interfaces!
-
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class SyncPlugin extends Plugin {
+	settings: SyncPluginSettings;
+	dbManager: SyncDbManager;
+	mongo: MongoService;
+	syncEngine: SyncEngine;
+	private syncIntervalId: number | null = null;
+	private statusBarEl: HTMLElement;
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+		this.dbManager = new SyncDbManager(this.app.vault, this.settings);
+		this.mongo = new MongoService();
+		this.syncEngine = new SyncEngine(
+			this.app.vault,
+			this.dbManager,
+			this.mongo,
+		);
+
+		this.statusBarEl = this.addStatusBarItem();
+		this.setStatus("Idle");
+
+		this.addRibbonIcon("refresh-cw", "Sync now", () => this.runSync());
+
+		this.addCommand({
+			id: "add-to-sync",
+			name: "Add file to sync",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file) return false;
+				if (checking) return !this.dbManager.isTracked(file.path);
+				this.addFileToSync(file.path);
+				return true;
+			},
 		});
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
+			id: "remove-from-sync",
+			name: "Remove file from sync",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file) return false;
+				if (checking) return this.dbManager.isTracked(file.path);
+				this.removeFileFromSync(file.path);
+				return true;
+			},
 		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+		this.addCommand({
+			id: "sync-now",
+			name: "Sync now",
+			callback: () => this.runSync(),
+		});
+
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, file) => {
+				if (!(file instanceof TFile)) return;
+
+				if (!this.dbManager.isTracked(file.path)) {
+					menu.addItem((item) =>
+						item
+							.setTitle("Add to MongoDB sync")
+							.setIcon("cloud-upload")
+							.onClick(() => this.addFileToSync(file.path)),
+					);
+				} else {
+					menu.addItem((item) =>
+						item
+							.setTitle("Remove from MongoDB sync")
+							.setIcon("cloud-off")
+							.onClick(() => this.removeFileFromSync(file.path)),
+					);
 				}
-				return false;
-			}
-		});
+			}),
+		);
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+		this.addSettingTab(new SyncSettingTab(this.app, this));
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-
+		await this.initializePlugin();
 	}
 
-	onunload() {
+	async onunload() {
+		if (this.mongo.isConnected()) {
+			try {
+				this.setStatus("Final sync...");
+				await this.syncEngine.syncAll();
+			} catch {
+				// best-effort on shutdown
+			}
+			await this.mongo.disconnect();
+		}
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			(await this.loadData()) as Partial<SyncPluginSettings>,
+		);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
-}
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
+	async reconnectMongo(): Promise<void> {
+		this.dbManager.updateConnectionFromSettings(this.settings);
+		await this.dbManager.save();
+
+		await this.mongo.connect(
+			this.settings.mongoUri,
+			this.settings.database,
+			this.settings.collection,
+		);
+		this.setStatus("Connected");
+		new Notice("MongoDB connected");
 	}
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
+	restartSyncInterval(): void {
+		if (this.syncIntervalId !== null) {
+			window.clearInterval(this.syncIntervalId);
+		}
+		const ms = this.settings.syncIntervalMinutes * 60 * 1000;
+		this.syncIntervalId = this.registerInterval(
+			window.setInterval(() => this.runSync(), ms),
+		);
 	}
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
+	private async initializePlugin(): Promise<void> {
+		await this.dbManager.load();
+		this.dbManager.updateConnectionFromSettings(this.settings);
+
+		if (this.settings.mongoUri) {
+			try {
+				await this.mongo.connect(
+					this.settings.mongoUri,
+					this.settings.database,
+					this.settings.collection,
+				);
+				this.setStatus("Connected");
+			} catch (e) {
+				const msg =
+					e instanceof Error ? e.message : String(e);
+				this.setStatus("Connection failed");
+				new Notice(`MongoDB connection failed: ${msg}`);
+			}
+		} else {
+			this.setStatus("Not configured");
+		}
+
+		this.restartSyncInterval();
+	}
+
+	private async addFileToSync(path: string): Promise<void> {
+		if (this.dbManager.addFile(path)) {
+			await this.dbManager.save();
+			new Notice(`Added ${path} to sync`);
+		} else {
+			new Notice(`${path} is already being synced`);
+		}
+	}
+
+	private async removeFileFromSync(path: string): Promise<void> {
+		if (this.dbManager.removeFile(path)) {
+			await this.dbManager.save();
+			new Notice(`Removed ${path} from sync`);
+		} else {
+			new Notice(`${path} is not being synced`);
+		}
+	}
+
+	private async runSync(): Promise<void> {
+		if (!this.mongo.isConnected()) {
+			this.setStatus("Not connected");
+			return;
+		}
+		if (this.syncEngine.isSyncing()) return;
+
+		this.setStatus("Syncing...");
+		const result = await this.syncEngine.syncAll();
+
+		if (result.errors.length > 0) {
+			this.setStatus("Sync errors");
+			new Notice(
+				`Sync completed with errors:\n${result.errors.join("\n")}`,
+			);
+		} else {
+			const parts: string[] = [];
+			if (result.uploaded > 0) parts.push(`${result.uploaded} uploaded`);
+			if (result.downloaded > 0)
+				parts.push(`${result.downloaded} downloaded`);
+			if (result.conflicts > 0)
+				parts.push(`${result.conflicts} conflicts`);
+			const summary = parts.length > 0 ? parts.join(", ") : "up to date";
+			this.setStatus(`Synced: ${summary}`);
+		}
+	}
+
+	private setStatus(text: string): void {
+		this.statusBarEl.setText(`Sync: ${text}`);
 	}
 }
