@@ -1,10 +1,20 @@
 import { MongoClient, Collection } from "mongodb";
 import { RemoteFileDoc } from "./types";
 
+/**
+ * provider methods for interacting with MongoDB collection
+ */
 export class MongoService {
-	private client: MongoClient | null = null;
-	private collection: Collection<RemoteFileDoc> | null = null;
+	private client: MongoClient | null = null; // NOTE: single instance per connection
+	private collection: Collection<RemoteFileDoc> | null = null; // Collection reference of cluster
 
+	/**
+	 * Initalizes connection and sets up collection reference
+	 *
+	 * @param uri - MongoDB connection URI
+	 * @param database - Database name
+	 * @param collectionName - Collection name to store file metadata
+	 */
 	async connect(
 		uri: string,
 		database: string,
@@ -37,6 +47,11 @@ export class MongoService {
 		return this.client !== null && this.collection !== null;
 	}
 
+	/**
+	 * Updates remote file data. Inserts if non-existent.
+	 *
+	 * @param doc - local file metadata
+	 */
 	async upsertFile(doc: RemoteFileDoc): Promise<void> {
 		this.ensureConnected();
 		await this.collection!.updateOne(

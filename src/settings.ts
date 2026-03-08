@@ -2,14 +2,19 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 import type SyncPlugin from "./main";
 import { SyncPluginSettings } from "./types";
 
+/**
+ * Visual interface for plugin settings
+ * NOTE: Extends PluginSettingTab 
+ */
 export class SyncSettingTab extends PluginSettingTab {
-	plugin: SyncPlugin;
+	plugin: SyncPlugin; // instance of the plugin
 
 	constructor(app: App, plugin: SyncPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
 
+	// Called by Obsidian when the settings tab is opened
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
@@ -118,8 +123,9 @@ export class SyncSettingTab extends PluginSettingTab {
 	}
 }
 
+/** Helper function to convert settings to a partial object for updates */
 export function settingsToPartial(
 	s: SyncPluginSettings,
 ): Partial<SyncPluginSettings> {
-	return { ...s };
+	return { ...s }; // NOTE: Partials convert all properties to optional, so this is just a type assertion
 }

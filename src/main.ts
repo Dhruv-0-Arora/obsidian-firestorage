@@ -5,6 +5,9 @@ import { SyncSettingTab } from "./settings";
 import { SyncEngine } from "./sync";
 import { DEFAULT_SETTINGS, SyncPluginSettings } from "./types";
 
+/** 
+ * Obsidian plugin to sync selected files with a MongoDB collection.
+ */
 export default class SyncPlugin extends Plugin {
 	settings: SyncPluginSettings;
 	dbManager: SyncDbManager;
@@ -17,7 +20,7 @@ export default class SyncPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.dbManager = new SyncDbManager(this.app.vault, this.settings);
-		this.mongo = new MongoService();
+		this.mongo = new MongoService(); // initalizing mongo connection
 		this.syncEngine = new SyncEngine(
 			this.app.vault,
 			this.dbManager,
@@ -98,6 +101,9 @@ export default class SyncPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Loads plugin settings, merging defaults with any saved data.
+	 */
 	async loadSettings() {
 		this.settings = Object.assign(
 			{},
@@ -176,6 +182,9 @@ export default class SyncPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Syncs all files
+	 */
 	private async runSync(): Promise<void> {
 		if (!this.mongo.isConnected()) {
 			this.setStatus("Not connected");
@@ -203,6 +212,9 @@ export default class SyncPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Handles changes to status bar text
+	 */
 	private setStatus(text: string): void {
 		this.statusBarEl.setText(`Sync: ${text}`);
 	}
