@@ -1,3 +1,4 @@
+/* eslint-disable obsidianmd/ui/sentence-case */
 import { App, PluginSettingTab, Setting } from "obsidian"
 import type SyncPlugin from "./main"
 import { SyncPluginSettings } from "./types"
@@ -19,8 +20,6 @@ export class SyncSettingTab extends PluginSettingTab {
         const { containerEl } = this
         containerEl.empty()
 
-        containerEl.createEl("h2", { text: "MongoDB sync" })
-
         new Setting(containerEl)
             .setName("MongoDB connection URI")
             .setDesc(
@@ -28,7 +27,7 @@ export class SyncSettingTab extends PluginSettingTab {
             )
             .addText(text => {
                 text.inputEl.type = "password"
-                text.inputEl.style.width = "100%"
+                text.inputEl.setCssProps({ width: "100%" })
                 text.setPlaceholder("mongodb+srv://...")
                     .setValue(this.plugin.settings.mongoUri)
                     .onChange(async value => {
@@ -98,7 +97,7 @@ export class SyncSettingTab extends PluginSettingTab {
                     })
             )
 
-        containerEl.createEl("h3", { text: "Connection" })
+        new Setting(containerEl).setName("Connection").setHeading()
 
         new Setting(containerEl)
             .setName("Test connection")
@@ -110,7 +109,7 @@ export class SyncSettingTab extends PluginSettingTab {
                     try {
                         await this.plugin.reconnectMongo()
                         btn.setButtonText("Connected")
-                    } catch (e) {
+                    } catch {
                         btn.setButtonText("Failed")
                     }
                     setTimeout(() => {

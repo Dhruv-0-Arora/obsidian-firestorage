@@ -35,11 +35,11 @@ export default class SyncPlugin extends Plugin {
         this.addCommand({
             id: "add-to-sync",
             name: "Add file to sync",
-            checkCallback: checking => {
+            checkCallback: (checking: boolean) => {
                 const file = this.app.workspace.getActiveFile()
                 if (!file) return false
                 if (checking) return !this.dbManager.isTracked(file.path)
-                this.addFileToSync(file.path)
+                void this.addFileToSync(file.path)
                 return true
             },
         })
@@ -51,7 +51,7 @@ export default class SyncPlugin extends Plugin {
                 const file = this.app.workspace.getActiveFile()
                 if (!file) return false
                 if (checking) return this.dbManager.isTracked(file.path)
-                this.removeFileFromSync(file.path)
+                void this.removeFileFromSync(file.path)
                 return true
             },
         })
@@ -69,14 +69,14 @@ export default class SyncPlugin extends Plugin {
                 if (!this.dbManager.isTracked(file.path)) {
                     menu.addItem(item =>
                         item
-                            .setTitle("Add to MongoDB sync")
+                            .setTitle("Add to mongodb sync")
                             .setIcon("cloud-upload")
                             .onClick(() => this.addFileToSync(file.path))
                     )
                 } else {
                     menu.addItem(item =>
                         item
-                            .setTitle("Remove from MongoDB sync")
+                            .setTitle("Remove from mongodb sync")
                             .setIcon("cloud-off")
                             .onClick(() => this.removeFileFromSync(file.path))
                     )
@@ -89,16 +89,18 @@ export default class SyncPlugin extends Plugin {
         await this.initializePlugin()
     }
 
-    async onunload() {
-        if (this.mongo.isConnected()) {
-            try {
-                this.setStatus("Final sync...")
-                await this.syncEngine.syncAll()
-            } catch {
-                // best-effort on shutdown
+    onunload() {
+        void (async () => {
+            if (this.mongo.isConnected()) {
+                try {
+                    this.setStatus("Final sync...")
+                    await this.syncEngine.syncAll()
+                } catch {
+                    // best-effort on shutdown
+                }
+                await this.mongo.disconnect()
             }
-            await this.mongo.disconnect()
-        }
+        })()
     }
 
     /**
@@ -126,7 +128,7 @@ export default class SyncPlugin extends Plugin {
             this.settings.collection
         )
         this.setStatus("Connected")
-        new Notice("MongoDB connected")
+        new Notice("Mongodb connected")
     }
 
     restartSyncInterval(): void {
@@ -135,7 +137,7 @@ export default class SyncPlugin extends Plugin {
         }
         const ms = this.settings.syncIntervalMinutes * 60 * 1000
         this.syncIntervalId = this.registerInterval(
-            window.setInterval(() => this.runSync(), ms)
+            window.setInterval(() => void this.runSync(), ms)
         )
     }
 
