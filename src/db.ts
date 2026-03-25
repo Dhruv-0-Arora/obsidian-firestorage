@@ -57,6 +57,8 @@ export class SyncDbManager {
         return this.data.trackedFiles
     }
 
+	/** TODO: Function that will use private key without passing it around to encrypt/decrypt file contents. */
+
     isTracked(path: string): boolean {
         return this.data.trackedFiles.some(f => f.path === path)
     }

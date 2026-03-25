@@ -42,6 +42,7 @@ export interface SyncDbData {
         collection: string
     }
     trackedFiles: TrackedFile[]
+	encryptionKey?: CryptoKey
 }
 
 /**
@@ -53,4 +54,13 @@ export interface RemoteFileDoc {
     content: string
     hash: string
     lastModified: number
+}
+
+/** contains the public key value as a base64 string to be stored in mongo */
+export interface PublicKey {
+	value: string
+}
+
+export interface CryptoKey {
+	value: string
 }
