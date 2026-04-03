@@ -1,5 +1,6 @@
 /* eslint-disable obsidianmd/ui/sentence-case */
-import { App, PluginSettingTab, Setting } from "obsidian"
+import { App, Notice, PluginSettingTab, Setting } from "obsidian"
+import { generateKeyBase64 } from "./encrypt"
 import type SyncPlugin from "./main"
 import { SyncPluginSettings } from "./types"
 
@@ -96,6 +97,74 @@ export class SyncSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings()
                     })
             )
+
+        new Setting(containerEl).setName("Encryption").setHeading()
+
+        new Setting(containerEl)
+            .setName("Enable encryption")
+            .setDesc(
+                "Encrypt file contents with AES-256-GCM before uploading to MongoDB. " +
+                "All machines must share the same key to read synced files."
+            )
+            .addToggle(toggle =>
+                toggle
+                    .setValue(this.plugin.settings.encryptionEnabled)
+                    .onChange(async value => {
+                        this.plugin.settings.encryptionEnabled = value
+                        await this.plugin.saveSettings()
+                        this.display()
+                    })
+            )
+
+        if (this.plugin.settings.encryptionEnabled) {
+            new Setting(containerEl)
+                .setName("Encryption key")
+                .setDesc(
+                    "The 256-bit AES key as a base64 string. " +
+                    "Paste an existing key from another machine, or generate a new one below."
+                )
+                .addText(text => {
+                    text.inputEl.type = "password"
+                    text.inputEl.style.width = "100%"
+                    text.setPlaceholder("Base64-encoded key")
+                        .setValue(this.plugin.settings.encryptionKey)
+                        .onChange(async value => {
+                            this.plugin.settings.encryptionKey = value
+                            await this.plugin.saveSettings()
+                        })
+                })
+
+            new Setting(containerEl)
+                .setName("Generate new key")
+                .setDesc(
+                    "Creates a new random 256-bit key. Copy it to your other machines before syncing."
+                )
+                .addButton(btn =>
+                    btn.setButtonText("Generate").onClick(async () => {
+                        const key = await generateKeyBase64()
+                        this.plugin.settings.encryptionKey = key
+                        await this.plugin.saveSettings()
+                        this.display()
+                        new Notice("New encryption key generated")
+                    })
+                )
+
+            if (this.plugin.settings.encryptionKey) {
+                new Setting(containerEl)
+                    .setName("Copy key to clipboard")
+                    .setDesc(
+                        "Copy the current key so you can paste it into this plugin's settings on another machine."
+                    )
+                    .addButton(btn =>
+                        btn.setButtonText("Copy key").onClick(async () => {
+                            await navigator.clipboard.writeText(
+                                this.plugin.settings.encryptionKey
+                            )
+                            new Notice("Encryption key copied to clipboard")
+                        })
+                    )
+            }
+        }
 
         new Setting(containerEl).setName("Connection").setHeading()
 

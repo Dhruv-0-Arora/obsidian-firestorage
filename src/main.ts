@@ -24,7 +24,8 @@ export default class SyncPlugin extends Plugin {
         this.syncEngine = new SyncEngine(
             this.app.vault,
             this.dbManager,
-            this.mongo
+            this.mongo,
+            this.settings,
         )
 
         this.statusBarEl = this.addStatusBarItem()
@@ -116,6 +117,7 @@ export default class SyncPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings)
+        this.syncEngine?.updateSettings(this.settings)
     }
 
     async reconnectMongo(): Promise<void> {

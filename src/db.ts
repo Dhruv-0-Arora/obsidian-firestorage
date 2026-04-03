@@ -1,5 +1,5 @@
 import { Vault } from "obsidian"
-import { SyncDbData, TrackedFile, SyncPluginSettings, CryptoKey } from "./types"
+import { SyncDbData, TrackedFile, SyncPluginSettings } from "./types"
 
 const EMPTY_DB: SyncDbData = {
     connection: { uri: "", database: "", collection: "" },
@@ -65,11 +65,6 @@ export class SyncDbManager {
     getTrackedFiles(): TrackedFile[] {
         return this.data.trackedFiles
     }
-
-	/** Retrieves the stored private encryption key, if it exists. */
-	getPrivateKey(): CryptoKey | null {
-		return this.data.encryptionKey || null
-	}
 
     isTracked(path: string): boolean {
         return this.data.trackedFiles.some(f => f.path === path)

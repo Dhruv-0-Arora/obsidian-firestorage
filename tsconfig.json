@@ -17,6 +17,7 @@
 		"strictBindCallApply": true,
 		"allowSyntheticDefaultImports": true,
 		"useUnknownInCatchVariables": true,
+		"typeRoots": ["./node_modules/@types"],
 		"lib": [
 			"DOM",
 			"ES5",
@@ -26,6 +27,5 @@
 	},
 	"include": [
 		"src/**/*.ts"
-		"prettier.config.js"
 	]
 }

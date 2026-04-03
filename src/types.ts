@@ -10,6 +10,8 @@ export interface SyncPluginSettings {
     collection: string
     syncIntervalMinutes: number
     dbFilePath: string
+    encryptionEnabled: boolean
+    encryptionKey: string
 }
 
 /**
@@ -21,6 +23,8 @@ export const DEFAULT_SETTINGS: SyncPluginSettings = {
     collection: "files",
     syncIntervalMinutes: 5,
     dbFilePath: ".obsidian-sync.db",
+    encryptionEnabled: false,
+    encryptionKey: "",
 }
 
 /**
@@ -42,7 +46,6 @@ export interface SyncDbData {
         collection: string
     }
     trackedFiles: TrackedFile[]
-	encryptionKey?: CryptoKey
 }
 
 /**
@@ -54,13 +57,4 @@ export interface RemoteFileDoc {
     content: string
     hash: string
     lastModified: number
-}
-
-/** contains the public key value as a base64 string to be stored in mongo */
-export interface PublicKey {
-	value: string
-}
-
-export interface CryptoKey {
-	value: string
 }

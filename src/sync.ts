@@ -1,8 +1,9 @@
 import { createHash } from "crypto"
 import { Notice, Vault } from "obsidian"
 import { SyncDbManager } from "./db"
+import { encryptContent, decryptContent } from "./encrypt"
 import { MongoService } from "./mongo"
-import { RemoteFileDoc, TrackedFile } from "./types"
+import { RemoteFileDoc, SyncPluginSettings, TrackedFile } from "./types"
 
 /** Type for result of Sync. Contains counts of uploaded, downloaded, and conflicted files, as well as any error messages. */
 export interface SyncResult {
@@ -18,19 +19,25 @@ export function computeHash(content: string): string {
 
 /** Syncing files between remote MongoDB and local vault */
 export class SyncEngine {
-    private vault: Vault // NOTE: Reference to Obsidian vault for file operations
+    private vault: Vault
     private db: SyncDbManager
     private mongo: MongoService
+    private settings: SyncPluginSettings
     private syncing = false
 
-    constructor(vault: Vault, db: SyncDbManager, mongo: MongoService) {
+    constructor(vault: Vault, db: SyncDbManager, mongo: MongoService, settings: SyncPluginSettings) {
         this.vault = vault
         this.db = db
         this.mongo = mongo
+        this.settings = settings
     }
 
     isSyncing(): boolean {
         return this.syncing
+    }
+
+    updateSettings(settings: SyncPluginSettings): void {
+        this.settings = settings
     }
 
     /** Main sync method to compare local and remote files using hashes and last fetch */
@@ -60,7 +67,6 @@ export class SyncEngine {
             errors: [],
         }
 
-        // iterating through tracked files and running sync logic for each
         try {
             const tracked = this.db.getTrackedFiles()
             for (const entry of tracked) {
@@ -79,18 +85,18 @@ export class SyncEngine {
         return result
     }
 
+    private useEncryption(): boolean {
+        return this.settings.encryptionEnabled && this.settings.encryptionKey.length > 0
+    }
+
     /**
      * Syncs a single file by comparing local and remote versions and deciding whether to
      * upload, download, or handle conflicts.
-     *
-     * @param entry - The tracked file entry containing path and last synced hash
-     * @param result - The SyncResult object to update counts of uploads, downloads, conflicts, and errors
      */
     private async syncFile(
         entry: TrackedFile,
         result: SyncResult
     ): Promise<void> {
-        // checking if file exists
         const localExists = await this.vault.adapter.exists(entry.path)
         const remote = await this.mongo.fetchFile(entry.path)
 
@@ -99,7 +105,22 @@ export class SyncEngine {
             : null
         const localHash =
             localContent !== null ? computeHash(localContent) : null
-        const remoteHash = remote?.hash ?? null
+
+        let remotePlaintext: string | null = null
+        if (remote) {
+            if (this.useEncryption()) {
+                try {
+                    remotePlaintext = await decryptContent(remote.content, this.settings.encryptionKey)
+                } catch {
+                    // Content was stored as plaintext before encryption was enabled;
+                    // treat as-is and it will be re-uploaded encrypted this cycle.
+                    remotePlaintext = remote.content
+                }
+            } else {
+                remotePlaintext = remote.content
+            }
+        }
+        const remoteHash = remotePlaintext !== null ? computeHash(remotePlaintext) : null
         const lastSynced = entry.lastSyncedHash
 
         if (localContent !== null && remote === null) {
@@ -109,7 +130,8 @@ export class SyncEngine {
         }
 
         if (localContent === null && remote !== null) {
-            await this.download(entry.path, remote)
+            await this.download(entry.path, remotePlaintext!)
+            this.db.updateSyncState(entry.path, computeHash(remotePlaintext!))
             result.downloaded++
             return
         }
@@ -130,20 +152,25 @@ export class SyncEngine {
             await this.upload(entry.path, localContent!)
             result.uploaded++
         } else if (!localChanged && remoteChanged) {
-            await this.download(entry.path, remote!)
+            await this.download(entry.path, remotePlaintext!)
+            this.db.updateSyncState(entry.path, remoteHash!)
             result.downloaded++
         } else {
-            await this.handleConflict(entry.path, localContent!, remote!)
+            await this.handleConflict(entry.path, localContent!, remotePlaintext!)
             result.conflicts++
         }
     }
 
     /**
-     * Uploads local content to remote MongoDB, overwriting existing content.
-     * Updates local sync state after successful upload.
+     * Uploads local content to remote MongoDB, encrypting if enabled.
+     * Hash is always computed on plaintext.
      */
-    private async upload(path: string, content: string): Promise<void> {
-        const hash = computeHash(content)
+    private async upload(path: string, plaintext: string): Promise<void> {
+        const hash = computeHash(plaintext)
+        const content = this.useEncryption()
+            ? await encryptContent(plaintext, this.settings.encryptionKey)
+            : plaintext
+
         const doc: RemoteFileDoc = {
             path,
             content,
@@ -155,9 +182,9 @@ export class SyncEngine {
     }
 
     /**
-     * Downloads remote content to local vault. Ensures parent directories exist before writing.
+     * Downloads plaintext content to local vault. Ensures parent directories exist before writing.
      */
-    private async download(path: string, remote: RemoteFileDoc): Promise<void> {
+    private async download(path: string, plaintext: string): Promise<void> {
         const parentDir = path.substring(0, path.lastIndexOf("/"))
         if (parentDir) {
             const dirExists = await this.vault.adapter.exists(parentDir)
@@ -165,8 +192,7 @@ export class SyncEngine {
                 await this.vault.adapter.mkdir(parentDir)
             }
         }
-        await this.vault.adapter.write(path, remote.content)
-        this.db.updateSyncState(path, remote.hash)
+        await this.vault.adapter.write(path, plaintext)
     }
 
     /**
@@ -174,8 +200,8 @@ export class SyncEngine {
      */
     private async handleConflict(
         path: string,
-        _localContent: string,
-        remote: RemoteFileDoc
+        localPlaintext: string,
+        remotePlaintext: string
     ): Promise<void> {
         const ext =
             path.lastIndexOf(".") !== -1
@@ -183,15 +209,13 @@ export class SyncEngine {
                 : ""
         const base = ext ? path.substring(0, path.lastIndexOf(".")) : path
 
-        // writing remote content to new file
         const conflictPath = `${base}.sync-conflict${ext}`
-        await this.vault.adapter.write(conflictPath, remote.content)
+        await this.vault.adapter.write(conflictPath, remotePlaintext)
 
         new Notice(
             `Sync conflict for ${path} — remote version saved as ${conflictPath}`
         )
 
-        // Upload local version as the canonical version
-        await this.upload(path, _localContent)
+        await this.upload(path, localPlaintext)
     }
 }
