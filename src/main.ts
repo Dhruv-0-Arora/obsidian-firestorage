@@ -227,6 +227,9 @@ export default class SyncPlugin extends Plugin {
         new Notice("Mongodb connected")
     }
 
+	/**
+	 * schedules the next sync based on interval
+	 */
     restartSyncInterval(): void {
         if (this.syncIntervalId !== null) {
             window.clearInterval(this.syncIntervalId)
@@ -258,6 +261,7 @@ export default class SyncPlugin extends Plugin {
             this.setStatus("Not configured")
         }
 
+		this.runSync(); // running initial sync on load
         this.restartSyncInterval()
     }
 
