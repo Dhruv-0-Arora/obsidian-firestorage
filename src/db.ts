@@ -4,6 +4,7 @@ import { SyncDbData, TrackedFile, SyncPluginSettings } from "./types"
 const EMPTY_DB: SyncDbData = {
     connection: { uri: "", database: "", collection: "" },
     trackedFiles: [],
+    trackedFolders: [],
 }
 
 /**
@@ -32,7 +33,12 @@ export class SyncDbManager {
         }
         const raw = await this.vault.adapter.read(this.filePath)
         try {
-            this.data = JSON.parse(raw) as SyncDbData
+			// loading while adapting to mismatched versions
+            const parsed = JSON.parse(raw) as SyncDbData
+            this.data = {
+                ...structuredClone(EMPTY_DB),
+                ...parsed,
+            }
         } catch {
             this.data = structuredClone(EMPTY_DB)
         }
@@ -78,6 +84,62 @@ export class SyncDbManager {
             lastSyncedAt: 0,
         })
         return true
+    }
+
+    isFolderTracked(folderPath: string): boolean {
+        return this.data.trackedFolders.includes(folderPath)
+    }
+
+    getTrackedFolders(): string[] {
+        return this.data.trackedFolders
+    }
+
+    /**
+     * Adds a folder to tracked folders and all vault files under it to tracked files.
+     * Returns the number of newly added files.
+     */
+    addFolder(folderPath: string): number {
+        if (this.isFolderTracked(folderPath)) return -1
+        this.data.trackedFolders.push(folderPath)
+
+        const prefix = folderPath + "/"
+        let added = 0
+        for (const file of this.vault.getFiles()) {
+            if (file.path.startsWith(prefix) && !this.isTracked(file.path)) {
+                this.data.trackedFiles.push({
+                    path: file.path,
+                    lastSyncedHash: "",
+                    lastSyncedAt: 0,
+                })
+                added++
+            }
+        }
+        return added
+    }
+
+    /**
+     * Removes a folder from tracking and all its files from tracked files.
+     * Returns the number of files removed.
+     */
+    removeFolder(folderPath: string): number {
+        if (!this.isFolderTracked(folderPath)) return -1
+        this.data.trackedFolders = this.data.trackedFolders.filter(
+            f => f !== folderPath
+        )
+
+        const prefix = folderPath + "/"
+        const before = this.data.trackedFiles.length
+        this.data.trackedFiles = this.data.trackedFiles.filter(
+            f => !f.path.startsWith(prefix)
+        )
+        return before - this.data.trackedFiles.length
+    }
+
+    /** Returns the tracked folder that contains this file path, if any. */
+    parentTrackedFolder(filePath: string): string | undefined {
+        return this.data.trackedFolders.find(folder =>
+            filePath.startsWith(folder + "/")
+        )
     }
 
     removeFile(path: string): boolean {

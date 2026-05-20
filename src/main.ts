@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile } from "obsidian"
+import { Notice, Plugin, TFile, TFolder } from "obsidian"
 import { SyncDbManager } from "./db"
 import { MongoService } from "./mongo"
 import { SyncSettingTab } from "./settings"
@@ -46,6 +46,23 @@ export default class SyncPlugin extends Plugin {
         })
 
         this.addCommand({
+            id: "add-to-sync-folder",
+            name: "Add folder to sync",
+            checkCallback: (checking: boolean) => {
+                const file = this.app.workspace.getActiveFile()
+                if (!file) return false
+                const folderPath = file.path.substring(
+                    0,
+                    file.path.lastIndexOf("/")
+                )
+                if (!folderPath) return false
+                if (checking) return !this.dbManager.isFolderTracked(folderPath)
+                void this.addFolderToSync(folderPath)
+                return true
+            },
+        })
+
+        this.addCommand({
             id: "remove-from-sync",
             name: "Remove file from sync",
             checkCallback: checking => {
@@ -58,6 +75,24 @@ export default class SyncPlugin extends Plugin {
         })
 
         this.addCommand({
+            id: "remove-from-sync-folder",
+            name: "Remove folder from sync",
+            checkCallback: checking => {
+                const file = this.app.workspace.getActiveFile()
+                if (!file) return false
+                const folderPath = file.path.substring(
+                    0,
+                    file.path.lastIndexOf("/")
+                )
+                if (!folderPath) return false
+                if (checking)
+                    return this.dbManager.isFolderTracked(folderPath)
+                void this.removeFolderFromSync(folderPath)
+                return true
+            },
+        })
+
+        this.addCommand({
             id: "sync-now",
             name: "Sync now",
             callback: () => this.runSync(),
@@ -65,22 +100,81 @@ export default class SyncPlugin extends Plugin {
 
         this.registerEvent(
             this.app.workspace.on("file-menu", (menu, file) => {
-                if (!(file instanceof TFile)) return
+                if (file instanceof TFile) {
+                    if (!this.dbManager.isTracked(file.path)) {
+                        menu.addItem(item =>
+                            item
+                                .setTitle("Add to mongodb sync")
+                                .setIcon("cloud-upload")
+                                .onClick(() => this.addFileToSync(file.path))
+                        )
+                    } else {
+                        menu.addItem(item =>
+                            item
+                                .setTitle("Remove from mongodb sync")
+                                .setIcon("cloud-off")
+                                .onClick(() =>
+                                    this.removeFileFromSync(file.path)
+                                )
+                        )
+                    }
+                } else if (file instanceof TFolder) {
+                    if (!this.dbManager.isFolderTracked(file.path)) {
+                        menu.addItem(item =>
+                            item
+                                .setTitle("Add folder to mongodb sync")
+                                .setIcon("folder-up")
+                                .onClick(() =>
+                                    this.addFolderToSync(file.path)
+                                )
+                        )
+                    } else {
+                        menu.addItem(item =>
+                            item
+                                .setTitle("Remove folder from mongodb sync")
+                                .setIcon("folder-minus")
+                                .onClick(() =>
+                                    this.removeFolderFromSync(file.path)
+                                )
+                        )
+                    }
+                }
+            })
+        )
 
-                if (!this.dbManager.isTracked(file.path)) {
-                    menu.addItem(item =>
-                        item
-                            .setTitle("Add to mongodb sync")
-                            .setIcon("cloud-upload")
-                            .onClick(() => this.addFileToSync(file.path))
-                    )
-                } else {
-                    menu.addItem(item =>
-                        item
-                            .setTitle("Remove from mongodb sync")
-                            .setIcon("cloud-off")
-                            .onClick(() => this.removeFileFromSync(file.path))
-                    )
+        this.registerEvent(
+            this.app.vault.on("create", file => {
+                if (!(file instanceof TFile)) return
+                if (this.dbManager.parentTrackedFolder(file.path)) {
+                    void this.addFileToSync(file.path)
+                }
+            })
+        )
+
+        this.registerEvent(
+            this.app.vault.on("rename", (file, oldPath) => {
+                if (!(file instanceof TFile)) return
+                const wasTracked = this.dbManager.isTracked(oldPath)
+                const nowInFolder = !!this.dbManager.parentTrackedFolder(
+                    file.path
+                )
+
+                if (wasTracked) {
+                    this.dbManager.removeFile(oldPath)
+                }
+                if (nowInFolder || wasTracked) {
+                    this.dbManager.addFile(file.path)
+                    void this.dbManager.save()
+                }
+            })
+        )
+
+        this.registerEvent(
+            this.app.vault.on("delete", file => {
+                if (!(file instanceof TFile)) return
+                if (this.dbManager.isTracked(file.path)) {
+                    this.dbManager.removeFile(file.path)
+                    void this.dbManager.save()
                 }
             })
         )
@@ -182,6 +276,28 @@ export default class SyncPlugin extends Plugin {
             new Notice(`Removed ${path} from sync`)
         } else {
             new Notice(`${path} is not being synced`)
+        }
+    }
+
+    private async addFolderToSync(folderPath: string): Promise<void> {
+        const added = this.dbManager.addFolder(folderPath)
+        if (added >= 0) {
+            await this.dbManager.save()
+            new Notice(`Added folder ${folderPath} to sync (${added} files)`)
+        } else {
+            new Notice(`${folderPath} is already being synced`)
+        }
+    }
+
+    private async removeFolderFromSync(folderPath: string): Promise<void> {
+        const removed = this.dbManager.removeFolder(folderPath)
+        if (removed >= 0) {
+            await this.dbManager.save()
+            new Notice(
+                `Removed folder ${folderPath} from sync (${removed} files)`
+            )
+        } else {
+            new Notice(`${folderPath} is not being synced`)
         }
     }
 
